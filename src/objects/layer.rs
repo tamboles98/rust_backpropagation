@@ -1,6 +1,6 @@
 use ndarray::{Array2, Array1};
 use ndarray_rand::RandomExt;
-use ndarray_rand::rand_distr::Uniform;
+use ndarray_rand::rand_distr::{Uniform, Distribution};
 
 pub mod activation_functions {
 /// Represents an activation function
@@ -9,14 +9,14 @@ pub mod activation_functions {
         fn activate(&self, input: f32) -> f32;
     }
 
-    struct Sigmoid;
+    pub struct Sigmoid;
     impl Activate for Sigmoid {
         fn activate(&self, input: f32) -> f32 {
             1. / (1. + (-input).exp())
         }
     }
 
-    struct ReLU;
+    pub struct ReLU;
     impl Activate for ReLU {
         fn activate(&self, input: f32) -> f32 {
             if input > 0. {
@@ -27,14 +27,14 @@ pub mod activation_functions {
         }
     }
 
-    struct Tanh;
+    pub struct Tanh;
     impl Activate for Tanh {
         fn activate(&self, input: f32) -> f32 {
             input.tanh()
         }
     }
 
-    struct Nothing;
+    pub struct Nothing;
     impl Activate for Nothing {
         fn activate(&self, input: f32) -> f32 {
             input
@@ -80,45 +80,124 @@ pub mod activation_functions {
 }
 
 /// Represents a layer of a neural network
-pub struct Layer<S>{ 
-    weigths: Array2<f32>,
+pub struct Layer{ 
+    neurons: usize,
+    weights: Option<Array2<f32>>,
     biases: Array1<f32>,
-    activation: S
+    activation: Box<dyn activation_functions::Activate>
 }
 
-impl <S> Layer<S> where S: activation_functions::Activate{
-    /// Creates a new layer with random weights and biases
-    pub fn new(neurons: usize, input_size: usize, activation: S) -> Self {
+impl Layer {
+    /// Creates a new unitialized layer with the given number of neurons and
+    /// activation function
+    pub fn new(neurons: usize, activation: Box<dyn activation_functions::Activate>) -> Self {
         let distr = Uniform::new(0., 1.);
-        let weights = Array2::random((neurons, input_size), distr);
+        let weights = Option::None;
         let biases = Array1::random((neurons,), distr);
         Layer {
-            weigths: weights,
+            neurons: neurons,
+            weights,
             biases: biases,
             activation: activation
         }
     }
 
-    pub fn initilize(&mut self) {
+    pub fn initialized(&self) -> bool {
+        self.weights.is_some()
+    }
+
+    pub fn initilize(&mut self, input_size: usize) {
         let distr = Uniform::new(0., 1.);
-        self.weigths = Array2::random(self.weigths.dim(), distr);
+        self.weights = Option::Some(Array2::random((self.neurons, input_size), distr));
+        self.biases = Array1::random(self.biases.dim(), distr);
+    }
+
+    pub fn initilize_with_distribution(&mut self, input_size: usize, distr: &impl Distribution<f32>) {
+        self.weights = Option::Some(Array2::random((self.neurons, input_size), distr));
         self.biases = Array1::random(self.biases.dim(), distr);
     }
 
     /// Returns the number of neurons in the layer
-    pub fn neurons(&self) -> usize {
-        self.weigths.shape()[0]
+    pub fn get_neurons(&self) -> usize {
+        self.neurons
     }
 
     /// Returns the number of inputs to the layer
-    pub fn input_size(&self) -> usize {
-        self.weigths.shape()[1]
+    pub fn get_input_size(&self) -> Option<usize> {
+        match self.weights.as_ref() {
+            Some(array) => Some(array.shape()[1]),
+            None => None
+        }
     }
 
     /// Evaluates the layer with the given input
     /// !panics if the input shape is wrong
+    /// !panics if the layer is not initialized
     pub fn evaluate(&self, input: &Array1<f32>) -> Array1<f32> {
-        let res = self.weigths.dot(input) + &self.biases;
+        let weights = self.weights.as_ref().unwrap();
+        let res = weights.dot(input) + &self.biases;
         res.mapv(|x| self.activation.activate(x))
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use ndarray_rand::rand;
+
+    struct TestDistribution;
+    impl Distribution<f32> for TestDistribution {
+        fn sample<R: rand::Rng + ?Sized>(&self, _: &mut R) -> f32 {
+            1.
+        }
+    }
+
+    #[test]
+    fn test_layer() {
+        let layer = Layer::new(3, Box::new(activation_functions::Sigmoid));
+        assert_eq!(layer.get_neurons(), 3);
+        assert_eq!(layer.get_input_size(), None);
+        assert_eq!(layer.initialized(), false);
+    }
+
+    #[test]
+    fn test_layer_initialized() {
+        let mut layer = Layer::new(3, Box::new(activation_functions::Sigmoid));
+        layer.initilize(2);
+        assert_eq!(layer.get_neurons(), 3);
+        assert_eq!(layer.get_input_size(), Some(2));
+        assert_eq!(layer.initialized(), true);
+    }
+
+    #[test]
+    fn test_layer_initialized_distribution() {
+        let mut layer = Layer::new(3, Box::new(activation_functions::Sigmoid));
+        layer.initilize_with_distribution(2, &TestDistribution);
+        assert_eq!(layer.get_neurons(), 3);
+        assert_eq!(layer.get_input_size(), Some(2));
+        assert_eq!(layer.initialized(), true);
+        assert_eq!(layer.weights.unwrap(),
+                Array2::from_shape_vec((3, 2), vec![1., 1., 1., 1., 1., 1.])
+            .unwrap());
+        assert_eq!(layer.biases, Array1::from_shape_vec((3,), vec![1., 1., 1.])
+            .unwrap());
+    }
+
+    #[test]
+    fn test_layer_evaluate() {
+        let mut layer = Layer::new(3, Box::new(activation_functions::Sigmoid));
+        layer.initilize(2);
+        let input = Array1::from(vec![1., 2.]);
+        let output = layer.evaluate(&input);
+        assert_eq!(output.shape(), &[3]);
+    }
+
+    #[test]
+    fn test_layer_evaluate_value() {
+        let mut layer = Layer::new(2, Box::new(activation_functions::Nothing));
+        layer.initilize_with_distribution(2, &TestDistribution);
+        let input = Array1::from(vec![1., 2.]);
+        let output = layer.evaluate(&input);
+        assert_eq!(output, Array1::from(vec![4., 4.]));
     }
 }
