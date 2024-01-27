@@ -79,22 +79,32 @@ pub mod activation_functions {
     }
 }
 
+
+pub trait NetworkLayer{
+    fn evaluate(&self, input: &Array1<f32>) -> Array1<f32>;
+    fn initilize(&mut self, input_size: usize);
+    fn initialized(&self) -> bool;
+    fn get_input_size(&self) -> Option<usize>;
+    fn get_neurons(&self) -> usize;
+}
+
 /// Represents a layer of a neural network
-pub struct Layer{ 
+pub struct FullyConnectedLayer<S> { 
     neurons: usize,
     weights: Option<Array2<f32>>,
     biases: Array1<f32>,
-    activation: Box<dyn activation_functions::Activate>
+    activation: S
 }
 
-impl Layer {
+impl <S> FullyConnectedLayer<S>
+where S: activation_functions::Activate{
     /// Creates a new unitialized layer with the given number of neurons and
     /// activation function
-    pub fn new(neurons: usize, activation: Box<dyn activation_functions::Activate>) -> Self {
+    pub fn new(neurons: usize, activation: S) -> Self {
         let distr = Uniform::new(0., 1.);
         let weights = Option::None;
         let biases = Array1::random((neurons,), distr);
-        Layer {
+        FullyConnectedLayer {
             neurons: neurons,
             weights,
             biases: biases,
@@ -102,28 +112,32 @@ impl Layer {
         }
     }
 
-    pub fn initialized(&self) -> bool {
+    pub fn initilize_with_distribution(&mut self, input_size: usize, distr: &impl Distribution<f32>) {
+        self.weights = Option::Some(Array2::random((self.neurons, input_size), distr));
+        self.biases = Array1::random(self.biases.dim(), distr);
+    }
+}
+
+impl <S> NetworkLayer for FullyConnectedLayer<S>
+where S: activation_functions::Activate {
+
+    fn initialized(&self) -> bool {
         self.weights.is_some()
     }
 
-    pub fn initilize(&mut self, input_size: usize) {
+    fn initilize(&mut self, input_size: usize) {
         let distr = Uniform::new(0., 1.);
         self.weights = Option::Some(Array2::random((self.neurons, input_size), distr));
         self.biases = Array1::random(self.biases.dim(), distr);
     }
 
-    pub fn initilize_with_distribution(&mut self, input_size: usize, distr: &impl Distribution<f32>) {
-        self.weights = Option::Some(Array2::random((self.neurons, input_size), distr));
-        self.biases = Array1::random(self.biases.dim(), distr);
-    }
-
     /// Returns the number of neurons in the layer
-    pub fn get_neurons(&self) -> usize {
+    fn get_neurons(&self) -> usize {
         self.neurons
     }
 
     /// Returns the number of inputs to the layer
-    pub fn get_input_size(&self) -> Option<usize> {
+    fn get_input_size(&self) -> Option<usize> {
         match self.weights.as_ref() {
             Some(array) => Some(array.shape()[1]),
             None => None
@@ -133,7 +147,7 @@ impl Layer {
     /// Evaluates the layer with the given input
     /// !panics if the input shape is wrong
     /// !panics if the layer is not initialized
-    pub fn evaluate(&self, input: &Array1<f32>) -> Array1<f32> {
+    fn evaluate(&self, input: &Array1<f32>) -> Array1<f32> {
         let weights = self.weights.as_ref().unwrap();
         let res = weights.dot(input) + &self.biases;
         res.mapv(|x| self.activation.activate(x))
@@ -154,7 +168,7 @@ mod test {
 
     #[test]
     fn test_layer() {
-        let layer = Layer::new(3, Box::new(activation_functions::Sigmoid));
+        let layer = FullyConnectedLayer::new(3, activation_functions::Sigmoid);
         assert_eq!(layer.get_neurons(), 3);
         assert_eq!(layer.get_input_size(), None);
         assert_eq!(layer.initialized(), false);
@@ -162,7 +176,7 @@ mod test {
 
     #[test]
     fn test_layer_initialized() {
-        let mut layer = Layer::new(3, Box::new(activation_functions::Sigmoid));
+        let mut layer = FullyConnectedLayer::new(3, activation_functions::Sigmoid);
         layer.initilize(2);
         assert_eq!(layer.get_neurons(), 3);
         assert_eq!(layer.get_input_size(), Some(2));
@@ -171,7 +185,7 @@ mod test {
 
     #[test]
     fn test_layer_initialized_distribution() {
-        let mut layer = Layer::new(3, Box::new(activation_functions::Sigmoid));
+        let mut layer = FullyConnectedLayer::new(3, activation_functions::Sigmoid);
         layer.initilize_with_distribution(2, &TestDistribution);
         assert_eq!(layer.get_neurons(), 3);
         assert_eq!(layer.get_input_size(), Some(2));
@@ -185,7 +199,7 @@ mod test {
 
     #[test]
     fn test_layer_evaluate() {
-        let mut layer = Layer::new(3, Box::new(activation_functions::Sigmoid));
+        let mut layer = FullyConnectedLayer::new(3, activation_functions::Sigmoid);
         layer.initilize(2);
         let input = Array1::from(vec![1., 2.]);
         let output = layer.evaluate(&input);
@@ -194,7 +208,7 @@ mod test {
 
     #[test]
     fn test_layer_evaluate_value() {
-        let mut layer = Layer::new(2, Box::new(activation_functions::Nothing));
+        let mut layer = FullyConnectedLayer::new(2, activation_functions::Nothing);
         layer.initilize_with_distribution(2, &TestDistribution);
         let input = Array1::from(vec![1., 2.]);
         let output = layer.evaluate(&input);
